@@ -5,73 +5,102 @@
 <script>
 
 var width = 960,
-    height = 500;
+    height = 500,
+    outerRadius = Math.min(width, height) * .5 - 10,
+    innerRadius = outerRadius * .6;
 
-var nodes = d3.range(50).map(function() { return {radius: Math.random() * 12 + 4}; }),
-    root = nodes[0],
-    color = d3.scale.category10();
+var n = 10,
+    data0 = d3.range(n).map(Math.random),
+    data1 = d3.range(n).map(Math.random),
+    data;
 
-root.radius = 0;
-root.fixed = true;
+var color = d3.scale.category20();
 
-var force = d3.layout.force()
-    .gravity(0.05)
-    .charge(function(d, i) { return i ? 0 : -2000; })
-    .nodes(nodes)
-    .size([width, height]);
+var arc = d3.svg.arc();
 
-force.start();
+var pie = d3.layout.pie()
+    .sort(null);
 
 var svg = d3.select("body").append("svg")
     .attr("width", width)
     .attr("height", height);
 
-svg.selectAll("circle")
-    .data(nodes.slice(1))
-  .enter().append("circle")
-    .attr("r", function(d) { return d.radius; })
-    .style("fill", function(d, i) { return color(i % 3); });
+svg.selectAll(".arc")
+    .data(arcs(data0, data1))
+  .enter().append("g")
+    .attr("class", "arc")
+    .attr("transform", "translate(" + width / 2 + "," + height / 2 + ")")
+  .append("path")
+    .attr("fill", function(d, i) { return color(i); })
+    .attr("d", arc);
 
-force.on("tick", function(e) {
-  var q = d3.geom.quadtree(nodes),
-      i = 0,
-      n = nodes.length;
+transition(1);
 
-  while (++i < n) q.visit(collide(nodes[i]));
+function arcs(data0, data1) {
+  var arcs0 = pie(data0),
+      arcs1 = pie(data1),
+      i = -1,
+      arc;
+  while (++i < n) {
+    arc = arcs0[i];
+    arc.innerRadius = innerRadius;
+    arc.outerRadius = outerRadius;
+    arc.next = arcs1[i];
+  }
+  return arcs0;
+}
 
-  svg.selectAll("circle")
-      .attr("cx", function(d) { return d.x; })
-      .attr("cy", function(d) { return d.y; });
-});
+function transition(state) {
+  var path = d3.selectAll(".arc > path")
+      .data(state ? arcs(data0, data1) : arcs(data1, data0));
 
-svg.on("mousemove", function() {
-  var p1 = d3.mouse(this);
-  root.px = p1[0];
-  root.py = p1[1];
-  force.resume();
-});
+  // Wedges split into two rings.
+  var t0 = path.transition()
+      .duration(1000)
+      .attrTween("d", tweenArc(function(d, i) {
+        return {
+          innerRadius: i & 1 ? innerRadius : (innerRadius + outerRadius) / 2,
+          outerRadius: i & 1 ? (innerRadius + outerRadius) / 2 : outerRadius
+        };
+      }));
 
-function collide(node) {
-  var r = node.radius + 16,
-      nx1 = node.x - r,
-      nx2 = node.x + r,
-      ny1 = node.y - r,
-      ny2 = node.y + r;
-  return function(quad, x1, y1, x2, y2) {
-    if (quad.point && (quad.point !== node)) {
-      var x = node.x - quad.point.x,
-          y = node.y - quad.point.y,
-          l = Math.sqrt(x * x + y * y),
-          r = node.radius + quad.point.radius;
-      if (l < r) {
-        l = (l - r) / l * .5;
-        node.x -= x *= l;
-        node.y -= y *= l;
-        quad.point.x += x;
-        quad.point.y += y;
-      }
-    }
-    return x1 > nx2 || x2 < nx1 || y1 > ny2 || y2 < ny1;
+  // Wedges translate to be centered on their final position.
+  var t1 = t0.transition()
+      .attrTween("d", tweenArc(function(d, i) {
+        var a0 = d.next.startAngle + d.next.endAngle,
+            a1 = d.startAngle - d.endAngle;
+        return {
+          startAngle: (a0 + a1) / 2,
+          endAngle: (a0 - a1) / 2
+        };
+      }));
+
+  // Wedges then update their values, changing size.
+  var t2 = t1.transition()
+        .attrTween("d", tweenArc(function(d, i) {
+          return {
+            startAngle: d.next.startAngle,
+            endAngle: d.next.endAngle
+          };
+        }));
+
+  // Wedges reunite into a single ring.
+  var t3 = t2.transition()
+      .attrTween("d", tweenArc(function(d, i) {
+        return {
+          innerRadius: innerRadius,
+          outerRadius: outerRadius
+        };
+      }));
+
+  setTimeout(function() { transition(!state); }, 5000);
+}
+
+function tweenArc(b) {
+  return function(a, i) {
+    var d = b.call(this, a, i), i = d3.interpolate(a, d);
+    for (var k in d) a[k] = d[k]; // update data
+    return function(t) { return arc(i(t)); };
   };
 }
 
